@@ -10,258 +10,373 @@ const dotenv = require('dotenv')
 dotenv.config({ path: path.resolve(process.cwd(), 'private.env') })
 const mongoose = require('mongoose')
 mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true })
+mongoose.set('useCreateIndex', true);
 const tool = require("./tool")
-const stock = require("./stock")
-const request = require('request')
 
-const likeStockSchema = new mongoose.Schema({
-	stock: String,
-	ip: String
+const threadSchema = new mongoose.Schema({
+	board: String,
+	text: String,
+	created_on: Date,
+	bumped_on: Date,
+	reported: Number,// Boolean
+	delete_password: String,
 })
-likeStockSchema.index({ stock: 1 })
-likeStockSchema.index({ ip: 1 })
+threadSchema.index({ board: 1 })
 
-const LikeStock = mongoose.model('LikeStock', likeStockSchema)
+const Thread = mongoose.model('Thread', threadSchema)
+Thread.ensureIndexes()
+const replySchema = new mongoose.Schema({
+	board: String,
+	threadId: String,
+	text: String,
+	created_on: Date,
+	reported: Number,// Boolean
+	delete_password: String,
+})
+replySchema.index({ board: 1 })
+replySchema.index({ threadId: 1 })
 
+const Reply = mongoose.model('Reply', replySchema)
 
+function cloneThread(thread) {
+	return {
+		_id: thread._id,
+		board: thread.board,
+		text: thread.text,
+		created_on: thread.created_on,
+		bumped_on: thread.bumped_on,
+		replies: [],
+		replycount: 0
+	}
+}
 
-const getOneStock = (stockName, done) => {
-	var checkResult = tool.checkStringNotBlank(stockName, "stock", true)
-	if (checkResult) {
-		done(null, { errorCode: -2, errorMsg: checkResult })
+function cloneReply(reply) {
+	return {
+		_id: reply._id,
+		board: reply.board,
+		threadId: reply.threadId,
+		text: reply.text,
+		created_on: reply.created_on,
+	}
+}
+
+const newThread = (board, text, password, done) => {
+	let checkParamList = [
+		{ param: text, checkFunc: tool.checkStringNotBlank, paramName: "text" },
+		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
 		return
 	}
-	stock.getStockInfo(stockName, (err, data) => {
+
+	let currentTime = new Date()
+	let objThread = {
+		board: board,
+		text: text,
+		created_on: currentTime,
+		bumped_on: currentTime,
+		reported: 0,
+		delete_password: password
+	}
+	let thread = new Thread(objThread)
+	thread.save((err, data) => {
 		if (err) {
 			done(err)
 			return
 		}
-		if (tool.isEmpty(data)) {
-			done(null, { errorCode: 1, errorMsg: stockName + ": This stock doesn't exists" })
-			return
-		}
-		LikeStock.countDocuments({ stock: data.symbol }, (err, count) => {
-			let stockObj = {
-				stock: data.symbol,
-				price: data.profile.price,
-				likes: count
-			}
-			done(null, { errorCode: 0, data: { stockData: stockObj } })
-		})
+		let ret = cloneThread(data)
+		done(null, { errorCode: 0, data: ret })
 	})
 }
 
-const getManyStock = (stockNames, done) => {
-	// Accept 2 stock only
-	stockNames = stockNames.slice(0, 2)
-	for (var elm of stockNames) {
-		var checkResult = tool.checkStringNotBlank(elm, "stock", true)
-		if (checkResult) {
-			done(null, { errorCode: -2, errorMsg: checkResult })
-			return
-		}
-	}
-
-	var arrStock = stockNames.map(elm => {
-		return {
-			stock: elm,
-			url: 'https://financialmodelingprep.com/api/v3/company/profile/' + elm
-		}
-	})
-
-	promiseForeach.each(arrStock, [(elm) => {
-		return fetch(elm.url).then(response => response.json())
-	}, (elm) => {
-		return LikeStock.countDocuments({ stock: elm.stock })
-	}], (arrResult, elm) => {
-		elm.result = arrResult[0]
-		elm.count = arrResult[1]
-		return elm
-	}, (err, newList) => {
-		if (err) {
-			done(err)
-		}
-		let stockInfoList = []
-		for (var elm of newList) {
-			if (tool.isEmpty(elm.result)) {
-				done(null, { errorCode: -1, errorMsg: elm.stock + ": This stock doesn't exists" })
-				return
-			}
-			stockInfoList.push({
-				stock: elm.result.symbol,
-				price: elm.result.profile.price,
-				likes: elm.count
-			})
-		}
-		// Count different like
-		let dif = stockInfoList[0].likes - stockInfoList[1].likes
-		stockInfoList[0].rel_likes = dif
-		stockInfoList[1].rel_likes = 0 - dif
-		delete stockInfoList[0].likes
-		delete stockInfoList[1].likes
-		done(null, { errorCode: 0, data: { stockData: stockInfoList } })
-	})
-
-}
-
-/**
- * Add like in one stock
- * @param string stockName
- * @param string ip
- * @param callback done
- */
-const addLike = (stockName, ip, done) => {
-	var checkResult = tool.checkStringNotBlank(stockName, "stock", true)
-	if (checkResult) {
-		done(null, { errorCode: -2, errorMsg: checkResult })
+const reportThread = (board, threadId, done) => {
+	let checkParamList = [
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
 		return
 	}
-	stock.getStockInfo(stockName, (err, dataStock) => {
+	Thread.findById(threadId, (err, data) => {
 		if (err) {
 			done(err)
 			return
 		}
-		if (tool.isEmpty(dataStock)) {
-			done(null, { errorCode: 1, errorMsg: stockName + ": This stock doesn't exists" })
+		if (!data) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
 			return
 		}
-		LikeStock.countDocuments({ stock: dataStock.symbol, ip: ip }, (err, count) => {
+		if (data.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match : thread.board=" + data.board })
+			return
+		}
+		data.reported = 1
+		data.save((err, data) => {
 			if (err) {
 				done(err)
 				return
 			}
-			if (count > 0) {
-				getOneStock(stockName, done)
-				return
-			} else {
-				let likeStockObj = {
-					stock: dataStock.symbol,
-					ip: ip
-				}
-				var like = new LikeStock(likeStockObj)
-				like.save((err, data) => {
-					if (err) {
-						done(err)
-						return
-					}
-					getOneStock(data.stock, done)
-					return
-				})
-			}
+			done(null, { errorCode: 0, message: "success" })
 		})
+
 	})
 }
 
-/**
- * Add line in multi stocks
- * @param Array stockNames
- * @param string ip
- * @param callback done
- */
-const addMultiStockLike = (stockNames, ip, done) => {
-	// Accept 2 stock only
-	stockNames = stockNames.slice(0, 2)
-	for (var elm of stockNames) {
-		var checkResult = tool.checkStringNotBlank(elm, "stock", true)
-		if (checkResult) {
-			done(null, { errorCode: -2, errorMsg: checkResult })
-			return
-		}
+const deleteThread = (board, threadId, password, done) => {
+	let checkParamList = [
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
+		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
+		return
 	}
-	var arrStock = stockNames.map(elm => {
-		return {
-			stock: elm,
-			url: 'https://financialmodelingprep.com/api/v3/company/profile/' + elm
-		}
-	})
 
-	// Query stock and count like
-	promiseForeach.each(arrStock, [(elm) => {
-		return fetch(elm.url).then(response => response.json())
-	}, (elm) => {
-		return LikeStock.countDocuments({ stock: elm.stock, ip: ip })
-	}], (arrResult, elm) => {
-		elm.result = arrResult[0]
-		elm.count = arrResult[1]
-		return elm
-	}, (err, newList) => {
+	Thread.findById(threadId, (err, data) => {
 		if (err) {
 			done(err)
 			return
 		}
-		let stockInfoList = []
-		for (var elm of newList) {
-			// not invalid stock
-			if (tool.isEmpty(elm.result)) {
-				done(null, { errorCode: -1, errorMsg: elm.stock + ": This stock doesn't exists" })
-				return
-			}
-			stockInfoList.push({
-				stock: elm.result.symbol,
-				price: elm.result.profile.price,
-				count: elm.count
-			})
+		if (!data) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
+			return
 		}
-		var promiseArr = []
-		stockInfoList.forEach(elm => {
-			// Create save like with no like by current ip
-			if (elm.count === 0) {
-				let likeStockObj = {
-					stock: elm.stock,
-					ip: ip
-				}
-				var like = new LikeStock(likeStockObj)
-				promiseArr.push(like.save())
-			}
-		})
-		// Execute save like
-		Promise.all(promiseArr).then((result) => {
-			promiseForeach.each(stockInfoList, [elm => {
-				return LikeStock.countDocuments({ stock: elm.stock })
-			}], (arrResult, elm) => {
-				elm.likes = arrResult[0]
-				return elm
-			}, (err, newList) => {
+		if (data.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match :" + data.board })
+			return
+		}
+		if (data.password !== password) {
+			done(null, { errorCode: 0, message: "incorrect password" })
+			return
+		}
+
+		Promise.all([
+			Reply.deleteMany({ board: board, threadId: threadId }),
+			Thread.findByIdAndDelete(threadId)])
+			.then(result => {
+				done(null, { errorCode: 0, message: "sucess" })
+			})
+			.catch(err => {
 				if (err) {
 					done(err)
 					return
 				}
-				// Count different like
-				let dif = newList[0].likes - newList[1].likes
-				newList[0].rel_likes = dif
-				newList[1].rel_likes = 0 - dif
-				delete newList[0].likes
-				delete newList[1].likes
-				delete newList[0].count
-				delete newList[1].count
-				done(null, { errorCode: 0, data: { stockData: newList } })
-
 			})
-		}).catch(err => done(err))
+
 	})
 }
 
+const newReply = (board, threadId, text, password, done) => {
+	let checkParamList = [
+		{ param: text, checkFunc: tool.checkStringNotBlank, paramName: "text" },
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
+		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
+		return
+	}
 
-const deleteLikeData = (stockNames, ip, done) => {
-	for (var elm of stockNames) {
-		var checkResult = tool.checkStringNotBlank(elm, "stock", true)
-		if (checkResult) {
-			done(null, { errorCode: -2, errorMsg: checkResult })
+	let currentTime = new Date()
+	Thread.findById(threadId, (err, data) => {
+		if (err) {
+			done(err)
 			return
 		}
-	}
-	let promiseArr = []
-	for (var elm of stockNames) {
-		promiseArr.push(LikeStock.deleteMany({ stock: elm, ip: ip }))
-	}
-	Promise.all(promiseArr).then(result => {
-		done(null, { errorCode: 0, message: "Delete succesful" })
-	}).catch(err => {
-		done(err)
+		if (!data) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
+			return
+		}
+		if (data.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match :" + data.board })
+			return
+		}
+		data.bumped_on = currentTime
+		data.save(err, data => {
+			let replyObj = {
+				board: board,
+				threadId: threadId,
+				text: text,
+				created_on: currentTime,
+				reported: 0,
+				delete_password: password
+			}
+			let reply = new Reply(replyObj)
+			reply.save((err, data) => {
+				if (err) {
+					done(err)
+					return
+				}
+				let ret = cloneReply(data)
+
+				done(null, { errorCode: 0, data: ret })
+			})
+		})
 	})
 }
-exports.getOneStock = getOneStock
-exports.getManyStock = getManyStock
-exports.addLike = addLike
-exports.addMultiStockLike = addMultiStockLike
-exports.deleteLikeData = deleteLikeData
+
+const reportReply = (board, threadId, replyId, done) => {
+	let checkParamList = [
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
+		{ param: replyId, checkFunc: tool.checkId, paramName: "replyId", isNotBlank: true },
+	]
+	if (!tool.checkParams(checkParamList, done)) {
+		return
+	}
+
+	Promise.all([Thread.findById(threadId), Reply.findById(replyId)]
+	).then(result => {
+		let thread = result[0]
+		let reply = result[1]
+		if (!thread) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
+			return
+		}
+
+		if (!reply) {
+			done(null, { errorCode: -2, errorMsg: "Reply _id=" + replyId + " is not found" })
+			return
+		}
+
+		if (thread.board !== board || reply.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match, thread.board=" + thread.board + ", reply.board=" + reply.board + ", board=" + board })
+			return
+		}
+		if (thread._id != reply.threadId) {
+			done(null, { errorCode: -2, errorMsg: "Thread Id is not match, thread.id=" + thread._id + ", reply.threadId=" + reply.threadId })
+			return
+		}
+
+		reply.reported=1
+		reply.save((err,data)=>{
+			if (err) {
+				done(err)
+				return
+			}
+			done(null, { errorCode: 0, message: "success" })
+		})
+	}).catch(err => done(err))
+}
+
+const deleteReply = (board, threadId, replyId, password, done) => {
+	let checkParamList = [
+		{ param: replyId, checkFunc: tool.checkId, paramName: "replyId", isNotBlank: true },
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
+		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
+		return
+	}
+
+	Promise.all([Thread.findById(threadId), Reply.findById(replyId)]
+	).then(result => {
+		let thread = result[0]
+		let reply = result[1]
+		if (!thread) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
+			return
+		}
+
+		if (!reply) {
+			done(null, { errorCode: -2, errorMsg: "Reply _id=" + replyId + " is not found" })
+			return
+		}
+
+		if (thread.board !== board || reply.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match, thread.board=" + thread.board + ", reply.board=" + reply.board + ", board=" + board })
+			return
+		}
+		if (thread._id != reply.threadId) {
+			done(null, { errorCode: -2, errorMsg: "Thread Id is not match, thread.id=" + thread._id + ", reply.threadId=" + reply.threadId })
+			return
+		}
+		if (reply.password !== password) {
+			done(null, { errorCode: 0, message: "incorrect password" })
+			return
+		}
+		reply.text = "[deleted]"
+		reply.save((err, data) => {
+			if (err) {
+				done(err)
+				return
+			}
+			done(null, { errorCode: 0, message: "success" })
+		})
+	}).catch(err => done(err))
+
+}
+
+const getReplyOfThread = (board, threadId, done) => {
+	let checkParamList = [
+		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true }
+	]
+	if (!tool.checkParams(checkParamList, done)) {
+		return
+	}
+	Thread.findById(threadId, (err, thread) => {
+		if (err) {
+			done(err)
+			return
+		}
+		if (!thread) {
+			done(null, { errorCode: -2, errorMsg: "Thread _id=" + threadId + " is not found " })
+			return
+		}
+		if (thread.board !== board) {
+			done(null, { errorCode: -2, errorMsg: "Board is not match : thread.board=" + thread.board })
+			return
+		}
+		let ret = cloneThread(thread)
+		Reply.find({ board: board, threadId: threadId }).sort({ created_on: -1 }).exec((err, datas) => {
+			if (err) {
+				done(err)
+				return
+			}
+			let newList = datas.map(elm => {
+				let retReply = cloneReply(elm)
+				return retReply
+			})
+			ret.replies = newList
+			ret.replycount = newList.length
+			done(null, { errorCode: 0, data: ret })
+		})
+	})
+}
+
+const getTopTenThread = (board, done) => {
+	Thread.find({ board: board }).sort({ bumped_on: -1 }).limit(10).exec((err, listThread) => {
+		if (err) {
+			done(err)
+			return
+		}
+
+		let retThread = listThread.map(elm => {
+			let ret = cloneThread(elm)
+			return ret
+		})
+		promiseForeach.each(retThread, [
+			(elm) => {
+				return Reply.find({ board: board, threadId: elm._id }).sort({ created_on: -1 }).limit(3)
+			}
+		], (arrResult, elm) => {
+			elm.replies = arrResult[0].map(item => {
+				let retReply = cloneReply(item)
+				return retReply
+			})
+			return elm
+		}, (err, newList) => {
+			if (err) {
+				done(err)
+				return
+			}
+
+			done(null, { errorCode: 0, data: newList })
+		}) // promiseForeach
+	}) //Thread.find
+}
+
+exports.newThread = newThread
+exports.reportThread = reportThread
+exports.deleteThread = deleteThread
+exports.newReply = newReply
+exports.reportReply = reportReply
+exports.deleteReply = deleteReply
+exports.getReplyOfThread = getReplyOfThread
+exports.getTopTenThread = getTopTenThread

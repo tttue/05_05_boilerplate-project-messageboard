@@ -1,0 +1,41 @@
+@link = http://localhost:3000
+@thread = api/threads/tuetest
+@reply = api/replies/tuetest
+
+### new thread
+POST {{link}}/{{thread}}
+Accept:  */*
+Content-Type: application/json
+
+{"text":"Thread11","delete_password":"2"}
+
+### report thread
+PUT {{link}}/{{thread}}
+Accept:  */*
+Content-Type: application/x-www-form-urlencoded
+
+thread_id=5d68c47905de083624a98a09
+
+### new reply
+POST {{link}}/{{reply}}
+Accept:  */*
+Content-Type: application/json
+
+{"thread_id":"5d68c47905de083624a98a09","text":"reply1-3","delete_password":"2"}
+
+### report reply
+PUT {{link}}/{{reply}}
+Accept:  */*
+Content-Type: application/json
+
+{"thread_id":"5d68c47905de083624a98a09","reply_id":"5d68cb2846990f4e0cb0e1f4"}
+
+### GET Thread
+GET {{link}}/{{thread}}
+Accept:  */*
+Content-Type: application/json
+
+### GET Reply
+GET {{link}}/{{reply}}?thread_id=5d68c47905de083624a98a09
+Accept:  */*
+
