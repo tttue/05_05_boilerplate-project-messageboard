@@ -152,7 +152,7 @@ const deleteThread = (board, threadId, delete_password, done) => {
 			Reply.deleteMany({ board: board, threadId: threadId }),
 			Thread.findByIdAndDelete(threadId)])
 			.then(result => {
-				done(null, { errorCode: 0, message: "sucess" })
+				done(null, { errorCode: 0, message: "success" })
 			})
 			.catch(err => {
 				if (err) {
