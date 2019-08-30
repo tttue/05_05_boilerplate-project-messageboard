@@ -60,10 +60,10 @@ function cloneReply(reply) {
 	}
 }
 
-const newThread = (board, text, password, done) => {
+const newThread = (board, text, delete_password, done) => {
 	let checkParamList = [
 		{ param: text, checkFunc: tool.checkStringNotBlank, paramName: "text" },
-		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+		{ param: delete_password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
 	]
 	if (!tool.checkParams(checkParamList, done)) {
 		return
@@ -76,7 +76,7 @@ const newThread = (board, text, password, done) => {
 		created_on: currentTime,
 		bumped_on: currentTime,
 		reported: 0,
-		delete_password: password
+		delete_password: delete_password
 	}
 	let thread = new Thread(objThread)
 	thread.save((err, data) => {
@@ -121,10 +121,10 @@ const reportThread = (board, threadId, done) => {
 	})
 }
 
-const deleteThread = (board, threadId, password, done) => {
+const deleteThread = (board, threadId, delete_password, done) => {
 	let checkParamList = [
 		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
-		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+		{ param: delete_password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
 	]
 	if (!tool.checkParams(checkParamList, done)) {
 		return
@@ -143,7 +143,7 @@ const deleteThread = (board, threadId, password, done) => {
 			done(null, { errorCode: -2, errorMsg: "Board is not match :" + data.board })
 			return
 		}
-		if (data.password !== password) {
+		if (data.delete_password !== delete_password) {
 			done(null, { errorCode: 0, message: "incorrect password" })
 			return
 		}
@@ -164,11 +164,11 @@ const deleteThread = (board, threadId, password, done) => {
 	})
 }
 
-const newReply = (board, threadId, text, password, done) => {
+const newReply = (board, threadId, text, delete_password, done) => {
 	let checkParamList = [
 		{ param: text, checkFunc: tool.checkStringNotBlank, paramName: "text" },
 		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
-		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+		{ param: delete_password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
 	]
 	if (!tool.checkParams(checkParamList, done)) {
 		return
@@ -196,7 +196,7 @@ const newReply = (board, threadId, text, password, done) => {
 				text: text,
 				created_on: currentTime,
 				reported: 0,
-				delete_password: password
+				delete_password: delete_password
 			}
 			let reply = new Reply(replyObj)
 			reply.save((err, data) => {
@@ -255,11 +255,11 @@ const reportReply = (board, threadId, replyId, done) => {
 	}).catch(err => done(err))
 }
 
-const deleteReply = (board, threadId, replyId, password, done) => {
+const deleteReply = (board, threadId, replyId, delete_password, done) => {
 	let checkParamList = [
 		{ param: replyId, checkFunc: tool.checkId, paramName: "replyId", isNotBlank: true },
 		{ param: threadId, checkFunc: tool.checkId, paramName: "threadId", isNotBlank: true },
-		{ param: password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
+		{ param: delete_password, checkFunc: tool.checkStringNotBlank, paramName: "delete_password" }
 	]
 	if (!tool.checkParams(checkParamList, done)) {
 		return
@@ -287,7 +287,7 @@ const deleteReply = (board, threadId, replyId, password, done) => {
 			done(null, { errorCode: -2, errorMsg: "Thread Id is not match, thread.id=" + thread._id + ", reply.threadId=" + reply.threadId })
 			return
 		}
-		if (reply.password !== password) {
+		if (reply.delete_password !== delete_password) {
 			done(null, { errorCode: 0, message: "incorrect password" })
 			return
 		}
